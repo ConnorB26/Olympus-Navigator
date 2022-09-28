@@ -1,0 +1,3 @@
+Add bot to server: https://discord.com/oauth2/authorize?client_id=1024474159364984893&scope=bot&permissions=8
+
+Run bot: nodemon
