@@ -1,5 +1,9 @@
-const { Client, GatewayIntentBits, REST, Routes } = require('discord.js')
-require('dotenv/config')
+import { config } from 'dotenv';
+import { Client, GatewayIntentBits, Routes } from 'discord.js';
+import { REST } from '@discordjs/rest';
+import GoalCommand from './commands/goal.js';
+
+config();
 
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -11,7 +15,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
     ]
-})
+});
 
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
@@ -19,31 +23,20 @@ client.on('ready', () => {
     console.log(`${client.user.tag} has logged in!`);
 });
 
-client.on('messageCreate', (message) => {
-    if(message.content === 'ping')
-    {
-        message.reply({
-            content: 'pong'
-        })
-    }
-})
-
 client.on('interactionCreate', (interaction) => {
     if(interaction.isChatInputCommand()) {
-        console.log('Hello, World');
-        interaction.reply({ content: 'Hey there!'})
+        console.log(interaction.commandName);
+        if(interaction.commandName === 'goals') {
+            interaction.reply({content: 'Added goal to your profile'});
+            // Update database
+            // Display goals
+        }
     }
-})
+});
 
 async function main() {
-    const commands = [
-        {
-            name: 'order',
-            description: 'Order something...'
-        },
-    ];
+    const commands = [GoalCommand];
     try {
-        console.log('Started refreshing application (/) commands.');
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
           body: commands,
         });
