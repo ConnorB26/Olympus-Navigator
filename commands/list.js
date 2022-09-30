@@ -9,7 +9,7 @@ const listCommands = new SlashCommandBuilder()
         subcommand.setName('club').setDescription('Show only club goals')
     )
     .addSubcommand(subcommand =>
-        subcommand.setName('self').setDescription('Show only personal goals')
+        subcommand.setName('personal').setDescription('Show only personal goals')
     )
 
 export default listCommands.toJSON();

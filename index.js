@@ -1,11 +1,14 @@
 import { config } from 'dotenv';
-import { Client, GatewayIntentBits, Routes } from 'discord.js';
-import { DefaultRestOptions, REST } from '@discordjs/rest';
+import { Client, GatewayIntentBits, Routes, EmbedBuilder } from 'discord.js';
+import { REST } from '@discordjs/rest';
 import { Sequelize } from 'sequelize';
+import _, { map } from 'underscore';
 import UserCommands from './commands/goal.js';
 import ClubCommands from './commands/club.js';
 import AdminCommands from './commands/admin.js';
 import ListCommands from './commands/list.js';
+import MapCommands from './commands/map.js';
+import characters from './commands/choices/characters.js';
 
 config();
 
@@ -17,7 +20,8 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
@@ -33,8 +37,7 @@ const sequelize = new Sequelize('database', 'user', 'password', {
 const playerGoals = sequelize.define('playerGoals', {
 	user: Sequelize.STRING,
 	character: {
-        type: Sequelize.STRING,
-        unique: true
+        type: Sequelize.STRING
     },
     currentStars: {
         type: Sequelize.INTEGER,
@@ -74,9 +77,68 @@ client.on('ready', () => {
 });
 
 client.on('interactionCreate', async interaction => {
+    if(!interaction.isAutocomplete()) return;
+
+    const user = interaction.user.username;
+    const { commandName } = interaction;
+
+    const focusedOption = interaction.options.getFocused(true);
+    let choices;
+
+    if(commandName === 'add') {
+        if(focusedOption.name === 'character') {
+            choices = await getCharactersWithoutGoal(user, false);
+        }
+    }
+
+    if(commandName === 'edit' || commandName === 'remove') {
+        if(focusedOption.name === 'character') {
+            choices = await getCharactersWithGoal(user, false);
+        }
+    }
+
+    if(commandName === 'progress' || commandName === 'complete') {
+        if(focusedOption.name === 'character') {
+            choices = await getCharactersWithGoal(user, false, true);
+        }
+    }
+
+    if(commandName === 'club') {
+        if(interaction.options.getSubcommand() === 'add') {
+            if(focusedOption.name === 'character') {
+                choices = await getCharactersWithoutGoal(user, true);
+            }
+        }
+
+        else if(interaction.options.getSubcommand() === 'edit' || interaction.options.getSubcommand() === 'remove') {
+            if(focusedOption.name === 'character') {
+                choices = await getCharactersWithGoal(user, true);
+            }
+        }
+    }
+
+    const filtered = choices.filter(choice => choice.startsWith(focusedOption.value)).slice(0, 25);
+    await interaction.respond(
+        filtered.map(choice => ({name: choice, value: choice}))
+    )
+});
+
+client.on('interactionCreate', async interaction => {
     if(!interaction.isChatInputCommand()) return;
 
+    await interaction.guild.members.fetch();
+    const admin = interaction.member.roles.cache.some(role => role.id === '857735222804217886') || interaction.member.roles.cache.some(role => role.id === '1025082187470618746');
+
     const { commandName } = interaction;
+    
+    if(commandName === 'map') {
+        if(!admin) {
+            return interaction.reply('You do not have access to this command.');
+        }
+
+        const floor = interaction.options.getInteger('floor');
+        return interaction.reply(`Retrieving possible maps for expedition floor ${floor}...`);
+    }
 
     if(commandName === 'add') {
         const user = interaction.user.username;
@@ -86,18 +148,10 @@ client.on('interactionCreate', async interaction => {
         const tag = interaction.options.getString('tag');
 
         if(await playerGoals.findOne({ where: { user: user, character: character } })) {
-            return interaction.reply(`Goal for ${character} already exists.`);
+            return interaction.reply(`Goal for ${character} already exists.`)
         }
 
-        await playerGoals.create({
-            user: user,
-            character: character,
-            goalStars: stars,
-            goalGearTier: gearTier,
-            tag: tag || ''
-        });
-
-        return interaction.reply(`Added goal for ${character}`);
+        return interaction.reply(await addGoal(user, character, stars, gearTier, tag, false));
     }
 
     if(commandName === 'edit') {
@@ -109,23 +163,15 @@ client.on('interactionCreate', async interaction => {
 
         const goal = await playerGoals.findOne({ where: { user: user, character: character } });
         if(goal.clubGoal) {
-            return interaction.reply(`You don't have permissions to edit the club goal for ${character}.`);
+            if(admin) {
+                return interaction.reply('To edit a club goal, use /club edit.')
+            }
+            else {
+                return interaction.reply('You do not have permission to edit a club goal assigned to you.')
+            }
         }
 
-        const affectedRows = await playerGoals.update({
-            goalStars: stars || goal.goalStars,
-            goalGearTier: gearTier || goal.goalGearTier,
-            tag: tag || goal.tag
-        }, { where: { user: user, character: character } })
-
-        checkComplete(user, character);
-
-        if(affectedRows > 0) {
-            return interaction.reply(`Edited goal for ${character}.`);
-        }
-        else {
-            return interaction.reply(`Goal for ${character} does not exist. Try creating one instead by using the /add command.`);
-        }
+        return interaction.reply(await editGoal(user, character, stars, gearTier, tag, false, false));
     }
 
     if(commandName === 'progress') {
@@ -134,40 +180,14 @@ client.on('interactionCreate', async interaction => {
         const stars = interaction.options.getInteger('stars');
         const gearTier = interaction.options.getInteger('gear_tier');
 
-        const affectedRows = await playerGoals.update({
-            currentStars: stars,
-            currentGearTier: gearTier
-        }, { where: { user: user, character: character } })
-
-        checkComplete(user, character);
-
-        if(affectedRows > 0) {
-            return interaction.reply(`Updated progress on goal for ${character}.`);
-        }
-        else {
-            return interaction.reply(`Goal for ${character} does not exist. Try creating one instead by using the /add command.`);
-        }
+        return interaction.reply(await progressGoal(user, character, stars, gearTier));
     }
 
     if(commandName === 'complete') {
         const user = interaction.user.username;
         const character = interaction.options.getString('character');
 
-        const goal = await playerGoals.findOne({ where: { user: user, character: character } });
-
-        const affectedRows = await playerGoals.update({
-            currentStars: goal.goalStars,
-            currentGearTier: goal.goalGearTier
-        }, { where: { user: user, character: character } })
-
-        checkComplete(user, character);
-
-        if(affectedRows > 0) {
-            return interaction.reply(`Completed goal for ${character}.`);
-        }
-        else {
-            return interaction.reply(`Goal for ${character} does not exist. Try creating one instead by using the /add command.`);
-        }
+        return interaction.reply(await completeGoal(user, character));
     }
 
     if(commandName === 'remove') {
@@ -176,37 +196,34 @@ client.on('interactionCreate', async interaction => {
 
         const goal = await playerGoals.findOne({ where: { user: user, character: character } });
         if(goal.clubGoal) {
-            return interaction.reply(`You don't have permissions to remove the club goal for ${character}.`);
+            if(admin) {
+                return interaction.reply('To remove a club goal, use /club remove.')
+            }
+            else {
+                return interaction.reply('You do not have permission to remove a club goal assigned to you.')
+            }
         }
 
-        const rowCount = await playerGoals.destroy({ where: { user: user, character: character } });
-
-	    if (!rowCount) {
-            return interaction.reply(`You currently don't have a goal for ${character} to remove.`);
-        }
-
-	    return interaction.reply(`Goal for ${character} deleted.`);
+        return interaction.reply(await removeGoal(user, character, true));
     }
 
     if(commandName === 'list') {
-        let goals;
+        const user = interaction.user.username;
+        let type;
         if(interaction.options.getSubcommand() === 'all') {
-            goals = await playerGoals.findAll({ where: { user: interaction.user.username } });
+            type = 'All';
         }
         else if(interaction.options.getSubcommand() === 'club') {
-            goals = await playerGoals.findAll({ where: { user: interaction.user.username, clubGoal: true } });
+            type = 'Club';
         }
-        else if(interaction.options.getSubcommand() === 'self') {
-            goals = await playerGoals.findAll({ where: { user: interaction.user.username, clubGoal: false } });
+        else if(interaction.options.getSubcommand() === 'personal') {
+            type = 'Personal';
         }
-        
-        const goalsString = stringifyGoals(goals);
-        
-        return interaction.reply(goalsString);
+        interaction.reply({embeds: await displayUserGoals(user, type)});
     }
 
     if(commandName === 'user') {
-        if(!interaction.member.roles.cache.some(role => role.id == '857735222804217886')) {
+        if(!admin) {
             interaction.reply({content: 'You do not have access to this command.'})
         }
         else {
@@ -215,111 +232,129 @@ client.on('interactionCreate', async interaction => {
                     attributes: ['user'],
                     group: ['user']
                 })
-                interaction.reply({content: users.map(t => t.user).join('\n')});
+
+                const res = users.map(t => t.user).join(', ') || 'No users have any goals.';
+
+                const userEmbed = new EmbedBuilder()
+                    .setColor(0x0099FF)
+                    .setTitle('User Stats')
+                    .addFields({ name: 'Users: ' + users.length, value: res, inline: true })
+
+                interaction.reply({embeds: [userEmbed] });
             }
     
             if(interaction.options.getSubcommand() === 'remove') {
-                const user = interaction.user.username;
-                const rowCount = await Tags.destroy({ where: { user: user } });
+                const user = interaction.options.getUser('user').username;
+                const rowCount = await playerGoals.destroy({ where: { user: user } });
     
                 if (!rowCount) {
                     interaction.reply(`${user} does not have any goals.`);
                 }
         
-                interaction.reply(`All goals for ${user} have been deleted.`);
+                interaction.reply({content: `All goals for ${user} have been deleted.`});
             }
     
             if(interaction.options.getSubcommand() === 'get') {
                 const user = interaction.options.getUser('user').username;
                 const type = interaction.options.getString('type');
-                let goals;
-                if(type === 'All') {
-                    goals = await playerGoals.findAll({ where: { user: user } });
-                }
-                else if (type === 'Club') {
-                    goals = await playerGoals.findAll({ where: { user: user, clubGoal: true } });
-                }
-                else if (type === 'Personal') {
-                    goals = await playerGoals.findAll({ where: { user: user, clubGoal: false } });
-                }
-    
-                const goalsString = stringifyGoals(goals);
             
-                interaction.reply({content: goalsString});
+                interaction.reply({embeds: await displayUserGoals(user, type)});
             }
         }
     }
 
     if(commandName === 'club') {
-        interaction.guild.members.fetch();
-        if(!interaction.member.roles.cache.some(role => role.id === 'Admin')) {
+        if(!admin) {
             return interaction.reply('You do not have access to this command.')
         }
-        else {
-            const members = interaction.guild.roles.cache.get('857737478383337473').members.map(m => m.user.username) // 1024796574376796170
-            if(interaction.options.getSubcommand() === 'add') {
-                const character = interaction.options.getString('character');
-                const stars = interaction.options.getInteger('stars');
-                const gearTier = interaction.options.getInteger('gear_tier');
-                const tag = interaction.options.getString('tag');
-        
-                if(await playerGoals.findOne({ where: { character: character, clubGoal: true } })) {
-                    return interaction.reply(`Club goal for ${character} already exists.`)
-                }
-        
-                members.forEach(user => {
-                    playerGoals.create({
-                        user: user,
-                        character: character,
-                        goalStars: stars,
-                        goalGearTier: gearTier,
-                        tag: tag || '',
-                        clubGoal: true
-                    })
-                });
-        
-                return interaction.reply(`Added club goal for ${character}`);
-            }
-            else if(interaction.options.getSubcommand() === 'edit') {
-                const character = interaction.options.getString('character');
-                const stars = interaction.options.getInteger('stars');
-                const gearTier = interaction.options.getInteger('gear_tier');
-                const tag = interaction.options.getString('tag');
-
-                const goalClub = await playerGoals.findOne({ where: { character: character, clubGoal: true } });
-                if(!goalClub) {
-                    return interaction.reply(`Club goal for ${character} does not exist. Try creating one instead by using the /club add command.`);
-                }
-
-                members.forEach(user => {
-                    playerGoals.update({
-                        goalStars: stars || goalClub.goalStars,
-                        goalGearTier: gearTier || goalClub.goalGearTier,
-                        tag: tag || goalClub.tag
-                    }, { where: { user: user, character: character } });
+        await interaction.guild.members.fetch();
+        const members = interaction.guild.roles.cache.get('857737478383337473').members.map(m => m.user.username)
+        if(interaction.options.getSubcommand() === 'add') {
+            const character = interaction.options.getString('character');
+            const stars = interaction.options.getInteger('stars');
+            const gearTier = interaction.options.getInteger('gear_tier');
+            const tag = interaction.options.getString('tag');
     
-                    checkComplete(user, character);
-                });
-
-                return interaction.reply(`Edited club goal for ${character}.`);
+            if(await playerGoals.findOne({ where: { character: character, clubGoal: true } })) {
+                return interaction.reply(`Club goal for ${character} already exists.`)
             }
-            else if(interaction.options.getSubcommand() === 'remove') {
-                const character = interaction.options.getString('character');
 
-                const rowCount = await playerGoals.destroy({ where: { character: character, clubGoal: true } });
-
-                if (!rowCount) {
-                    interaction.reply(`There isn't currently a club goal for ${character} to remove.`);
-                }
-
-                return interaction.reply(`Club goal for ${character} deleted.`);
+            for(const user of members) {
+                await addGoal(user, character, stars, gearTier, tag, true);
             }
+    
+            return interaction.reply(`Added club goal for ${character}`);
+        }
+        else if(interaction.options.getSubcommand() === 'edit') {
+            const character = interaction.options.getString('character');
+            const stars = interaction.options.getInteger('stars');
+            const gearTier = interaction.options.getInteger('gear_tier');
+            const tag = interaction.options.getString('tag');
+
+            if(!await playerGoals.findOne({ where: { character: character, clubGoal: true } })) {
+                return interaction.reply(`Club goal for ${character} does not exist. Try creating one instead by using /club add.`);
+            }
+
+            for(const user of members) {
+                await editGoal(user, character, stars, gearTier, tag, true, true);
+            }
+
+            return interaction.reply(`Edited club goal for ${character}.`);
+        }
+        else if(interaction.options.getSubcommand() === 'remove') {
+            const character = interaction.options.getString('character');
+
+            return interaction.reply(await removeGoal(null, character, true));
         }
     }
 });
 
+async function displayUserGoals(user, type) {
+    let clubEmbed;
+    let personalEmbed;
+
+    if (type === 'Club' || type === 'All') {
+        const clubGoals = await playerGoals.findAll({ where: { user: user, clubGoal: true } });
+        clubEmbed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('Club Goals for ' + user)
+
+        const split = _.toArray(_.groupBy(clubGoals, function(goal) { return goal.tag; }));
+        const sortedSplit = _.sortBy(split, function(goal) { return goal[0].tag; });
+        sortedSplit.forEach(element => {
+            const sortedElement = _.sortBy(element, 'complete');
+            const tag = sortedElement[0].tag || 'No Tag';
+            clubEmbed.addFields({name: tag, value: stringifyGoals(sortedElement)});
+        });
+}
+    if (type === 'Personal'  || type === 'All') {
+        const personalGoals = await playerGoals.findAll({ where: { user: user, clubGoal: false } });
+        personalEmbed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('Personal Goals for ' + user)
+
+        const split = _.toArray(_.groupBy(personalGoals, function(goal) { return goal.tag; }));
+        const sortedSplit = _.sortBy(split, function(goal) { return goal[0].tag; });
+        sortedSplit.forEach(element => {
+            const sortedElement = _.sortBy(element, 'complete');
+            const tag = sortedElement[0].tag || 'No Tag';
+            personalEmbed.addFields({name: tag, value: stringifyGoals(sortedElement)});
+        });
+    }
+
+    if(type === 'Club') {
+        return [clubEmbed];
+    }
+    else if(type === 'Personal') {
+        return [personalEmbed];
+    }
+    else {
+        return [clubEmbed, personalEmbed];
+    }
+}
+
 function stringifyGoals(goals) {
-    return goals.map(t => t.character + ' ' + t.currentStars + '/' + t.goalStars + ' :star: ' + t.currentGearTier + '/' + t.goalGearTier + ' :gear:').join('\n') || 'No goals found.';
+    return goals.map(t => (t.complete ? ':white_check_mark:' : ':x:') + ' ' + t.character + ' ' + t.currentStars + '/' + t.goalStars + ' :star: ' + t.currentGearTier + '/' + t.goalGearTier + ' :gear:').join('\n') || 'No goals found.';
 }
 
 async function checkComplete(user, character) {
@@ -332,8 +367,118 @@ async function checkComplete(user, character) {
     return false;
 }
 
+async function addGoal(user, character, stars, gear, tag, clubGoal) {
+    try {
+        await playerGoals.create({
+            user: user,
+            character: character,
+            goalStars: stars,
+            goalGearTier: gear,
+            tag: tag || '',
+            clubGoal: clubGoal
+        });
+
+        return `Added goal for ${character}`;
+    }
+    catch (error) {
+        return 'Something went wrong with adding goal.';
+    }
+}
+
+async function editGoal(user, character, stars, gear, tag, clubGoal, admin) {
+    if(!admin && clubGoal) {
+        return `You don't have permissions to edit the club goal for ${character}.`;
+    }
+
+    const goal = await playerGoals.findOne({ where: { user: user, character: character } });
+    const affectedRows = await playerGoals.update({
+        goalStars: stars || goal.goalStars,
+        goalGearTier: gear || goal.goalGearTier,
+        tag: tag || goal.tag
+    }, { where: { user: user, character: character } })
+
+    checkComplete(user, character);
+
+    if(affectedRows > 0) {
+        return `Edited${clubGoal ? ' club' : ''} goal for ${character}.`;
+    }
+    else {
+        return `${clubGoal ? 'Club goal' : 'Goal'} for ${character} does not exist. Try creating one instead by using the /add command.`;
+    }
+}
+
+async function removeGoal(user, character, clubGoal) {
+    let rowCount;
+    if(clubGoal) {
+        rowCount = await playerGoals.destroy({ where: { character: character, clubGoal: clubGoal } });
+    }
+    else {
+        rowCount = await playerGoals.destroy({ where: { user: user, character: character } });
+    }
+
+    if (!rowCount) {
+        return `There isn't currently a${clubGoal ? ' club' : ''} goal for ${character} to remove.`;
+    }
+
+    return `Club goal for ${character} deleted.`;
+}
+
+async function progressGoal(user, character, stars, gear) {
+    if(!await playerGoals.findOne({ where: { user: user, character: character } })) {
+        return `Goal for ${character} does not exist. Try creating one instead by using the /add command.`;
+    }
+
+    await playerGoals.update({
+        currentStars: stars,
+        currentGearTier: gear
+    }, { where: { user: user, character: character } })
+
+    const complete = await checkComplete(user, character);
+
+    if(!complete) {
+        return `Updated progress on goal for ${character}.`;
+    }
+    else {
+        return `Completed goal for ${character}.`;
+    }
+}
+
+async function completeGoal(user, character) {
+    const goal = await playerGoals.findOne({ where: { user: user, character: character } });
+    if(!goal) {
+        return `Goal for ${character} does not exist. Try creating one instead by using the /add command.`;
+    }
+
+    return await progressGoal(user, character, goal.goalStars, goal.goalGearTier);
+}
+
+async function getCharactersWithoutGoal(user, clubGoal) {
+    const goalChars = await getCharactersWithGoal(user, clubGoal, true);
+    return characters.filter(char => !goalChars.includes(char));
+}
+
+async function getCharactersWithGoal(user, clubGoal, all) {
+    let characters;
+    if(!all) {
+        characters = await playerGoals.findAll({
+            attributes: ['character'],
+            group: ['character'],
+            where: { user: user, clubGoal: clubGoal }
+        });
+    }
+    else {
+        characters = await playerGoals.findAll({
+            attributes: ['character'],
+            group: ['character'],
+            where: { user: user }
+        });
+    }
+    const characterList = characters.map(c => c.character);
+    return characterList;
+}
+
 async function main() {
-    const commands = [ClubCommands, AdminCommands, ListCommands].concat(UserCommands);
+    const commands = [MapCommands, ClubCommands, AdminCommands, ListCommands].concat(UserCommands);
     try {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
           body: commands,
