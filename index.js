@@ -8,7 +8,9 @@ import ClubCommands from './commands/club.js';
 import AdminCommands from './commands/admin.js';
 import ListCommands from './commands/list.js';
 import MapCommands from './commands/map.js';
+import CommandCommands from './commands/command.js';
 import characters from './commands/choices/characters.js';
+import commands from './commands/choices/commands.js';
 
 config();
 
@@ -123,6 +125,7 @@ client.on('interactionCreate', async interaction => {
     )
 });
 
+const ephemeral = true;
 client.on('interactionCreate', async interaction => {
     if(!interaction.isChatInputCommand()) return;
 
@@ -148,10 +151,10 @@ client.on('interactionCreate', async interaction => {
         const tag = interaction.options.getString('tag');
 
         if(await playerGoals.findOne({ where: { user: user, character: character } })) {
-            return interaction.reply(`Goal for ${character} already exists.`)
+            return interaction.reply({content:`Goal for ${character} already exists.`, ephemeral: ephemeral})
         }
 
-        return interaction.reply(await addGoal(user, character, stars, gearTier, tag, false));
+        return interaction.reply({content: await addGoal(user, character, stars, gearTier, tag, false), ephemeral: ephemeral});
     }
 
     if(commandName === 'edit') {
@@ -164,14 +167,14 @@ client.on('interactionCreate', async interaction => {
         const goal = await playerGoals.findOne({ where: { user: user, character: character } });
         if(goal.clubGoal) {
             if(admin) {
-                return interaction.reply('To edit a club goal, use /club edit.')
+                return interaction.reply({content: 'To edit a club goal, use /club edit.', ephemeral: ephemeral})
             }
             else {
-                return interaction.reply('You do not have permission to edit a club goal assigned to you.')
+                return interaction.reply({content: 'You do not have permission to edit a club goal assigned to you.', ephemeral: ephemeral})
             }
         }
 
-        return interaction.reply(await editGoal(user, character, stars, gearTier, tag, false, false));
+        return interaction.reply({content: await editGoal(user, character, stars, gearTier, tag, false, false), ephemeral: ephemeral});
     }
 
     if(commandName === 'progress') {
@@ -180,14 +183,14 @@ client.on('interactionCreate', async interaction => {
         const stars = interaction.options.getInteger('stars');
         const gearTier = interaction.options.getInteger('gear_tier');
 
-        return interaction.reply(await progressGoal(user, character, stars, gearTier));
+        return interaction.reply({content: await progressGoal(user, character, stars, gearTier), ephemeral: ephemeral});
     }
 
     if(commandName === 'complete') {
         const user = interaction.user.username;
         const character = interaction.options.getString('character');
 
-        return interaction.reply(await completeGoal(user, character));
+        return interaction.reply({content: await completeGoal(user, character), ephemeral: ephemeral});
     }
 
     if(commandName === 'remove') {
@@ -197,14 +200,14 @@ client.on('interactionCreate', async interaction => {
         const goal = await playerGoals.findOne({ where: { user: user, character: character } });
         if(goal.clubGoal) {
             if(admin) {
-                return interaction.reply('To remove a club goal, use /club remove.')
+                return interaction.reply({content: 'To remove a club goal, use /club remove.', ephemeral: ephemeral})
             }
             else {
-                return interaction.reply('You do not have permission to remove a club goal assigned to you.')
+                return interaction.reply({content: 'You do not have permission to remove a club goal assigned to you.', ephemeral: ephemeral})
             }
         }
 
-        return interaction.reply(await removeGoal(user, character, true));
+        return interaction.reply({content: await removeGoal(user, character, true), ephemeral: ephemeral});
     }
 
     if(commandName === 'list') {
@@ -219,12 +222,12 @@ client.on('interactionCreate', async interaction => {
         else if(interaction.options.getSubcommand() === 'personal') {
             type = 'Personal';
         }
-        interaction.reply({embeds: await displayUserGoals(user, type)});
+        interaction.reply({embeds: await displayUserGoals(user, type), ephemeral: ephemeral});
     }
 
     if(commandName === 'user') {
         if(!admin) {
-            interaction.reply({content: 'You do not have access to this command.'})
+            interaction.reply({content: 'You do not have access to this command.', ephemeral: ephemeral})
         }
         else {
             if(interaction.options.getSubcommand() === 'list') {
@@ -240,7 +243,7 @@ client.on('interactionCreate', async interaction => {
                     .setTitle('User Stats')
                     .addFields({ name: 'Users: ' + users.length, value: res, inline: true })
 
-                interaction.reply({embeds: [userEmbed] });
+                interaction.reply({embeds: [userEmbed], ephemeral: ephemeral});
             }
     
             if(interaction.options.getSubcommand() === 'remove') {
@@ -248,24 +251,24 @@ client.on('interactionCreate', async interaction => {
                 const rowCount = await playerGoals.destroy({ where: { user: user } });
     
                 if (!rowCount) {
-                    interaction.reply(`${user} does not have any goals.`);
+                    interaction.reply({content: `${user} does not have any goals.`, ephemeral: ephemeral});
                 }
         
-                interaction.reply({content: `All goals for ${user} have been deleted.`});
+                interaction.reply({content: `All goals for ${user} have been deleted.`, ephemeral: ephemeral});
             }
     
             if(interaction.options.getSubcommand() === 'get') {
                 const user = interaction.options.getUser('user').username;
                 const type = interaction.options.getString('type');
             
-                interaction.reply({embeds: await displayUserGoals(user, type)});
+                interaction.reply({embeds: await displayUserGoals(user, type), ephemeral: ephemeral});
             }
         }
     }
 
     if(commandName === 'club') {
         if(!admin) {
-            return interaction.reply('You do not have access to this command.')
+            return interaction.reply({content: 'You do not have access to this command.', ephemeral: ephemeral});
         }
         await interaction.guild.members.fetch();
         const members = interaction.guild.roles.cache.get('857737478383337473').members.map(m => m.user.username)
@@ -276,14 +279,14 @@ client.on('interactionCreate', async interaction => {
             const tag = interaction.options.getString('tag');
     
             if(await playerGoals.findOne({ where: { character: character, clubGoal: true } })) {
-                return interaction.reply(`Club goal for ${character} already exists.`)
+                return interaction.reply({content: `Club goal for ${character} already exists.`, ephemeral: ephemeral});
             }
 
             for(const user of members) {
                 await addGoal(user, character, stars, gearTier, tag, true);
             }
     
-            return interaction.reply(`Added club goal for ${character}`);
+            return interaction.reply({content: `Added club goal for ${character}`, ephemeral: ephemeral});
         }
         else if(interaction.options.getSubcommand() === 'edit') {
             const character = interaction.options.getString('character');
@@ -292,20 +295,33 @@ client.on('interactionCreate', async interaction => {
             const tag = interaction.options.getString('tag');
 
             if(!await playerGoals.findOne({ where: { character: character, clubGoal: true } })) {
-                return interaction.reply(`Club goal for ${character} does not exist. Try creating one instead by using /club add.`);
+                return interaction.reply({content: `Club goal for ${character} does not exist. Try creating one instead by using /club add.`, ephemeral: ephemeral});
             }
 
             for(const user of members) {
                 await editGoal(user, character, stars, gearTier, tag, true, true);
             }
 
-            return interaction.reply(`Edited club goal for ${character}.`);
+            return interaction.reply({content: `Edited club goal for ${character}.`, ephemeral: ephemeral});
         }
         else if(interaction.options.getSubcommand() === 'remove') {
             const character = interaction.options.getString('character');
 
-            return interaction.reply(await removeGoal(null, character, true));
+            return interaction.reply({content: await removeGoal(null, character, true), ephemeral: ephemeral});
         }
+    }
+
+    if(commandName === 'commands') {
+        const commandEmbed = new EmbedBuilder()
+                    .setColor(0x0099FF)
+                    .setTitle('Commands')
+                    .addFields({ name: 'Standard', value: commands[0].join('\n')})
+
+        if(admin) {
+            commandEmbed.addFields({ name: 'Admin', value: commands[1].join('\n')})
+        }
+
+        interaction.reply({embeds: [commandEmbed], ephemeral: ephemeral});
     }
 });
 
@@ -478,7 +494,7 @@ async function getCharactersWithGoal(user, clubGoal, all) {
 }
 
 async function main() {
-    const commands = [MapCommands, ClubCommands, AdminCommands, ListCommands].concat(UserCommands);
+    const commands = [MapCommands, ClubCommands, AdminCommands, ListCommands, CommandCommands].concat(UserCommands);
     try {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
           body: commands,
