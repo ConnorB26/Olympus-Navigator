@@ -7,8 +7,8 @@ import UserCommands from './commands/goal.js';
 import ClubCommands from './commands/club.js';
 import AdminCommands from './commands/admin.js';
 import ListCommands from './commands/list.js';
-import MapCommands from './commands/map.js';
 import CommandCommands from './commands/command.js';
+import DropCommand from './commands/drop.js';
 import characters from './commands/choices/characters.js';
 import commands from './commands/choices/commands.js';
 
@@ -33,8 +33,6 @@ const sequelize = new Sequelize('database', 'user', 'password', {
 	logging: false,
 	storage: 'database.sqlite',
 });
-
-//sequelize.drop('playerGoals');
 
 const playerGoals = sequelize.define('playerGoals', {
 	user: Sequelize.STRING,
@@ -130,19 +128,11 @@ client.on('interactionCreate', async interaction => {
     if(!interaction.isChatInputCommand()) return;
 
     await interaction.guild.members.fetch();
-    const admin = interaction.member.roles.cache.some(role => role.id === '857735222804217886') || interaction.member.roles.cache.some(role => role.id === '1025082187470618746');
+    const botMaster = interaction.member.roles.cache.some(role => role.id === '1025082187470618746');
+    const admin = interaction.member.roles.cache.some(role => role.id === '857735222804217886') || botMaster;
 
     const { commandName } = interaction;
     
-    if(commandName === 'map') {
-        if(!admin) {
-            return interaction.reply('You do not have access to this command.');
-        }
-
-        const floor = interaction.options.getInteger('floor');
-        return interaction.reply(`Retrieving possible maps for expedition floor ${floor}...`);
-    }
-
     if(commandName === 'add') {
         const user = interaction.user.username;
         const character = interaction.options.getString('character');
@@ -317,11 +307,21 @@ client.on('interactionCreate', async interaction => {
                     .setTitle('Commands')
                     .addFields({ name: 'Standard', value: commands[0].join('\n')})
 
-        if(admin) {
+        if(admin && !botMaster) {
             commandEmbed.addFields({ name: 'Admin', value: commands[1].join('\n')})
         }
 
-        interaction.reply({embeds: [commandEmbed], ephemeral: ephemeral});
+        interaction.reply({embeds: [commandEmbed], ephemeral: (ephemeral && !botMaster)});
+    }
+
+    if(commandName === 'drop') {
+        if(!botMaster) {
+            return interaction.reply({content: 'You do not have access to this command.', ephemeral: ephemeral});
+        }
+        else {
+            sequelize.drop('playerGoals');
+            return interaction.reply({content: 'Player goals table has been dropped.', ephemeral: ephemeral});
+        }
     }
 });
 
@@ -494,7 +494,7 @@ async function getCharactersWithGoal(user, clubGoal, all) {
 }
 
 async function main() {
-    const commands = [MapCommands, ClubCommands, AdminCommands, ListCommands, CommandCommands].concat(UserCommands);
+    const commands = [ClubCommands, AdminCommands, ListCommands, CommandCommands, DropCommand].concat(UserCommands);
     try {
         await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
           body: commands,
