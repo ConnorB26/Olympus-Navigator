@@ -117,7 +117,7 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    const filtered = choices.filter(choice => choice.startsWith(focusedOption.value)).slice(0, 25);
+    const filtered = choices.filter(choice => choice.toLowerCase().includes(focusedOption.value.toLowerCase())).slice(0, 25);
     await interaction.respond(
         filtered.map(choice => ({name: choice, value: choice}))
     )
